@@ -1,35 +1,97 @@
 version: '3.8'
 
 services:
-  db:
-    image: mysql:8
-    restart: always
-    environment:
-      MYSQL_DATABASE: bookstore
-      MYSQL_USER: bookstore_user
-      MYSQL_PASSWORD: bookstore_pass
-      MYSQL_ROOT_PASSWORD: root_pass
+  # Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
     ports:
-      - "3306:3306"
-    volumes:
-      - db_data:/var/lib/mysql
-    networks:
-      - bookstore_net
-
-  flaskapp:
-    build: .
-    restart: always
+      - "5672:5672"
+      - "15672:15672"
     environment:
-      - FLASK_ENV=development
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+
+  # Databases
+  auth-db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: auth_db
+    volumes:
+      - auth_db_data:/var/lib/mysql
+
+  catalog-db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: catalog_db
+    volumes:
+      - catalog_db_data:/var/lib/mysql
+
+  order-db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: order_db
+    volumes:
+      - order_db_data:/var/lib/mysql
+
+  # Microservices
+  auth-service:
+    build: ./microservices/auth-service
+    ports:
+      - "5001:5000"
+    environment:
+      DB_HOST: auth-db
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      - auth-db
+      - rabbitmq
+
+  catalog-service:
+    build: ./microservices/catalog-service
+    ports:
+      - "5002:5000"
+    environment:
+      DB_HOST: catalog-db
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      - catalog-db
+      - rabbitmq
+
+  order-service:
+    build: ./microservices/order-service
+    ports:
+      - "5003:5000"
+    environment:
+      DB_HOST: order-db
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      - order-db
+      - rabbitmq
+
+  api-gateway:
+    build: ./api-gateway
     ports:
       - "5000:5000"
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:5000
+      CATALOG_SERVICE_URL: http://catalog-service:5000
+      ORDER_SERVICE_URL: http://order-service:5000
+      JWT_SECRET: ${JWT_SECRET}
     depends_on:
-      - db
-    networks:
-      - bookstore_net
+      - auth-service
+      - catalog-service
+      - order-service
+
+  client:
+    build: ./client
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api-gateway
 
 volumes:
-  db_data:
-
-networks:
-  bookstore_net:
+  auth_db_data:
+  catalog_db_data:
+  order_db_data:
